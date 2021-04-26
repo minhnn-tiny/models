@@ -1,4 +1,4 @@
-# Copyright 2020 The TensorFlow Authors. All Rights Reserved.
+# Copyright 2021 The TensorFlow Authors. All Rights Reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -11,7 +11,7 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-# ==============================================================================
+
 """Factory methods to build models."""
 
 # Import libraries
@@ -41,7 +41,8 @@ from official.vision.beta.modeling.layers import roi_sampler
 def build_classification_model(
     input_specs: tf.keras.layers.InputSpec,
     model_config: classification_cfg.ImageClassificationModel,
-    l2_regularizer: tf.keras.regularizers.Regularizer = None):
+    l2_regularizer: tf.keras.regularizers.Regularizer = None,
+    skip_logits_layer: bool = False) -> tf.keras.Model:
   """Builds the classification model."""
   backbone = backbones.factory.build_backbone(
       input_specs=input_specs,
@@ -58,13 +59,15 @@ def build_classification_model(
       add_head_batch_norm=model_config.add_head_batch_norm,
       use_sync_bn=norm_activation_config.use_sync_bn,
       norm_momentum=norm_activation_config.norm_momentum,
-      norm_epsilon=norm_activation_config.norm_epsilon)
+      norm_epsilon=norm_activation_config.norm_epsilon,
+      skip_logits_layer=skip_logits_layer)
   return model
 
 
-def build_maskrcnn(input_specs: tf.keras.layers.InputSpec,
-                   model_config: maskrcnn_cfg.MaskRCNN,
-                   l2_regularizer: tf.keras.regularizers.Regularizer = None):
+def build_maskrcnn(
+    input_specs: tf.keras.layers.InputSpec,
+    model_config: maskrcnn_cfg.MaskRCNN,
+    l2_regularizer: tf.keras.regularizers.Regularizer = None) -> tf.keras.Model:
   """Builds Mask R-CNN model."""
   backbone = backbones.factory.build_backbone(
       input_specs=input_specs,
@@ -192,9 +195,10 @@ def build_maskrcnn(input_specs: tf.keras.layers.InputSpec,
   return model
 
 
-def build_retinanet(input_specs: tf.keras.layers.InputSpec,
-                    model_config: retinanet_cfg.RetinaNet,
-                    l2_regularizer: tf.keras.regularizers.Regularizer = None):
+def build_retinanet(
+    input_specs: tf.keras.layers.InputSpec,
+    model_config: retinanet_cfg.RetinaNet,
+    l2_regularizer: tf.keras.regularizers.Regularizer = None) -> tf.keras.Model:
   """Builds RetinaNet model."""
   backbone = backbones.factory.build_backbone(
       input_specs=input_specs,
@@ -219,6 +223,9 @@ def build_retinanet(input_specs: tf.keras.layers.InputSpec,
       num_anchors_per_location=num_anchors_per_location,
       num_convs=head_config.num_convs,
       num_filters=head_config.num_filters,
+      attribute_heads=[
+          cfg.as_dict() for cfg in (head_config.attribute_heads or [])
+      ],
       use_separable_conv=head_config.use_separable_conv,
       activation=norm_activation_config.activation,
       use_sync_bn=norm_activation_config.use_sync_bn,
@@ -235,14 +242,22 @@ def build_retinanet(input_specs: tf.keras.layers.InputSpec,
       use_batched_nms=generator_config.use_batched_nms)
 
   model = retinanet_model.RetinaNetModel(
-      backbone, decoder, head, detection_generator_obj)
+      backbone,
+      decoder,
+      head,
+      detection_generator_obj,
+      min_level=model_config.min_level,
+      max_level=model_config.max_level,
+      num_scales=model_config.anchor.num_scales,
+      aspect_ratios=model_config.anchor.aspect_ratios,
+      anchor_size=model_config.anchor.anchor_size)
   return model
 
 
 def build_segmentation_model(
     input_specs: tf.keras.layers.InputSpec,
     model_config: segmentation_cfg.SemanticSegmentationModel,
-    l2_regularizer: tf.keras.regularizers.Regularizer = None):
+    l2_regularizer: tf.keras.regularizers.Regularizer = None) -> tf.keras.Model:
   """Builds Segmentation model."""
   backbone = backbones.factory.build_backbone(
       input_specs=input_specs,
@@ -261,6 +276,7 @@ def build_segmentation_model(
       num_classes=model_config.num_classes,
       level=head_config.level,
       num_convs=head_config.num_convs,
+      prediction_kernel_size=head_config.prediction_kernel_size,
       num_filters=head_config.num_filters,
       upsample_factor=head_config.upsample_factor,
       feature_fusion=head_config.feature_fusion,

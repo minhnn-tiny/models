@@ -1,4 +1,4 @@
-# Copyright 2019 The TensorFlow Authors. All Rights Reserved.
+# Copyright 2021 The TensorFlow Authors. All Rights Reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -11,7 +11,7 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-# ==============================================================================
+
 """Tests for Keras-based transformer block layer."""
 
 from absl.testing import parameterized
@@ -29,7 +29,7 @@ class TransformerEncoderBlockLayerTest(keras_parameterized.TestCase):
 
   def tearDown(self):
     super(TransformerEncoderBlockLayerTest, self).tearDown()
-    tf.keras.mixed_precision.experimental.set_policy('float32')
+    tf.keras.mixed_precision.set_global_policy('float32')
 
   def test_layer_creation(self, transformer_cls):
     test_layer = transformer_cls(
@@ -54,18 +54,6 @@ class TransformerEncoderBlockLayerTest(keras_parameterized.TestCase):
     output_tensor = test_layer([data_tensor, mask_tensor])
     # The default output of a transformer layer should be the same as the input.
     self.assertEqual(data_tensor.shape.as_list(), output_tensor.shape.as_list())
-
-  def test_layer_creation_with_incorrect_mask_fails(self, transformer_cls):
-    test_layer = transformer_cls(
-        num_attention_heads=10, inner_dim=2048, inner_activation='relu')
-    sequence_length = 21
-    width = 80
-    # Create a 3-dimensional input (the first dimension is implicit).
-    data_tensor = tf.keras.Input(shape=(sequence_length, width))
-    # Create a 2-dimensional input (the first dimension is implicit).
-    mask_tensor = tf.keras.Input(shape=(sequence_length, sequence_length - 3))
-    with self.assertRaisesRegex(ValueError, 'When passing a mask tensor.*'):
-      _ = test_layer([data_tensor, mask_tensor])
 
   def test_layer_invocation(self, transformer_cls):
     test_layer = transformer_cls(
@@ -192,7 +180,7 @@ class TransformerEncoderBlockLayerTest(keras_parameterized.TestCase):
         new_output_tensor, output_tensor[:, 0:1, :], atol=5e-5, rtol=0.003)
 
   def test_layer_invocation_with_float16_dtype(self, transformer_cls):
-    tf.keras.mixed_precision.experimental.set_policy('mixed_float16')
+    tf.keras.mixed_precision.set_global_policy('mixed_float16')
     test_layer = transformer_cls(
         num_attention_heads=10, inner_dim=2048, inner_activation='relu')
     sequence_length = 21
@@ -248,6 +236,20 @@ class TransformerEncoderBlockLayerTest(keras_parameterized.TestCase):
     output_data = model.predict(input_data)
 
     self.assertAllEqual([1, input_length, width], output_data.shape)
+
+  def test_separate_qkv(self, transformer_cls):
+    test_layer = transformer_cls(
+        num_attention_heads=2,
+        inner_dim=128,
+        inner_activation='relu',
+        kernel_initializer=tf.keras.initializers.TruncatedNormal(stddev=0.02))
+    # Forward path.
+    q_tensor = tf.zeros([2, 4, 16], dtype=tf.float32)
+    kv_tensor = tf.zeros([2, 8, 16], dtype=tf.float32)
+    dummy_mask = tf.zeros([2, 4, 8], dtype=tf.float32)
+    inputs = [q_tensor, kv_tensor, dummy_mask]
+    output = test_layer(inputs)
+    self.assertEqual(output.shape, q_tensor.shape)
 
 
 @keras_parameterized.run_all_keras_modes

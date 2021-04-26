@@ -1,4 +1,4 @@
-# Copyright 2020 The Orbit Authors. All Rights Reserved.
+# Copyright 2021 The Orbit Authors. All Rights Reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -64,7 +64,7 @@ class OptionalSummariesFunction:
           return TrainFunctionWithSummaries(function, **kwargs)
         return functools.partial(TrainFunctionWithSummaries, **kwargs)
 
-  The director can be applied directly to `train()` methods:
+  The decorator can be applied directly to `train()` methods:
 
       @train_function_with_summaries
       def train(self, num_steps):

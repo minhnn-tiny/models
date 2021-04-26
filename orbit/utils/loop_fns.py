@@ -1,4 +1,4 @@
-# Copyright 2020 The Orbit Authors. All Rights Reserved.
+# Copyright 2021 The Orbit Authors. All Rights Reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -112,7 +112,10 @@ def create_tf_while_loop_fn(step_fn):
           "cause unnecessary retracing when wrapped by `tf.function`.")
 
     for _ in tf.range(num_steps):
-      step_fn(iterator)
+      # Clear out the outer name scope so the ops created inside `tf.while_loop`
+      # don't get "while/" as name prefix.
+      with tf.name_scope(""):
+        step_fn(iterator)
 
   return loop_fn
 
@@ -157,15 +160,18 @@ def create_tf_while_loop_fn_with_state(step_fn):
           "cause unnecessary retracing when wrapped by `tf.function`.")
 
     for _ in tf.range(num_steps):
-      # Relax the shapes within the loop, so the shape of `state` can change
-      # across iterations. This is useful to aggregate outputs from each step
-      # and concat to `state`.
-      tf.autograph.experimental.set_loop_options(
-          shape_invariants=[(t, tf.TensorShape([None] * t.shape.rank))
-                            for t in tf.nest.flatten(state)
-                            if tf.is_tensor(t)])
-      outputs = step_fn(iterator)
-      state = reduce_fn(state, outputs)
+      # Clear out the outer name scope so the ops created inside `tf.while_loop`
+      # don't get "while/" as name prefix.
+      with tf.name_scope(""):
+        # Relax the shapes within the loop, so the shape of `state` can change
+        # across iterations. This is useful to aggregate outputs from each step
+        # and concat to `state`.
+        tf.autograph.experimental.set_loop_options(
+            shape_invariants=[(t, tf.TensorShape([None] * t.shape.rank))
+                              for t in tf.nest.flatten(state)
+                              if tf.is_tensor(t)])
+        outputs = step_fn(iterator)
+        state = reduce_fn(state, outputs)
     return state
 
   return loop_fn_with_state

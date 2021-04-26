@@ -1,4 +1,4 @@
-# Copyright 2020 The Orbit Authors. All Rights Reserved.
+# Copyright 2021 The Orbit Authors. All Rights Reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -135,6 +135,17 @@ class StandardRunnerTest(parameterized.TestCase):
         use_tf_while_loop=use_tf_while_loop)
     evaluator = TestEvaluatorWithOutputsAggregation(options)
     self.assertEqual(evaluator.evaluate(tf.constant(10)), 45)
+
+  @parameterized.named_parameters(
+      ("recreate_iterator_for_each_eval", True, 10, 10),
+      ("not_recreate_iterator_for_each_eval", False, 10, 35))
+  def test_evaluator_with_repeat_dataset(self, recreate_iterator_for_each_eval,
+                                         sum_for_1st_time, sum_for_2nd_time):
+    options = standard_runner.StandardEvaluatorOptions(
+        recreate_iterator_for_each_eval=recreate_iterator_for_each_eval)
+    evaluator = TestEvaluatorWithOutputsAggregation(options)
+    self.assertEqual(evaluator.evaluate(tf.constant(5)), sum_for_1st_time)
+    self.assertEqual(evaluator.evaluate(tf.constant(5)), sum_for_2nd_time)
 
 
 if __name__ == "__main__":

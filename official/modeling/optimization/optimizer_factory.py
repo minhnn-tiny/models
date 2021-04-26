@@ -1,4 +1,4 @@
-# Copyright 2020 The TensorFlow Authors. All Rights Reserved.
+# Copyright 2021 The TensorFlow Authors. All Rights Reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -21,6 +21,7 @@ import tensorflow as tf
 import tensorflow_addons.optimizers as tfa_optimizers
 
 from official.modeling.optimization import ema_optimizer
+from official.modeling.optimization import lars_optimizer
 from official.modeling.optimization import lr_schedule
 from official.modeling.optimization.configs import optimization_config as opt_cfg
 from official.nlp import optimization as nlp_optimization
@@ -30,7 +31,8 @@ OPTIMIZERS_CLS = {
     'adam': tf.keras.optimizers.Adam,
     'adamw': nlp_optimization.AdamWeightDecay,
     'lamb': tfa_optimizers.LAMB,
-    'rmsprop': tf.keras.optimizers.RMSprop
+    'rmsprop': tf.keras.optimizers.RMSprop,
+    'lars': lars_optimizer.LARS,
 }
 
 LR_CLS = {
@@ -40,6 +42,7 @@ LR_CLS = {
     'cosine': tf.keras.experimental.CosineDecay,
     'power': lr_schedule.DirectPowerDecay,
     'power_linear': lr_schedule.PowerAndLinearDecay,
+    'power_with_offset': lr_schedule.PowerDecayWithOffset,
 }
 
 WARMUP_CLS = {
@@ -48,7 +51,7 @@ WARMUP_CLS = {
 }
 
 
-class OptimizerFactory(object):
+class OptimizerFactory:
   """Optimizer factory class.
 
   This class builds learning rate and optimizer based on an optimization config.

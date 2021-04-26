@@ -1,5 +1,4 @@
-# Lint as: python3
-# Copyright 2020 The TensorFlow Authors. All Rights Reserved.
+# Copyright 2021 The TensorFlow Authors. All Rights Reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -12,7 +11,8 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-# ==============================================================================
+
+# Lint as: python3
 """Mask R-CNN configuration definition."""
 
 import os
@@ -31,11 +31,13 @@ from official.vision.beta.configs import decoders
 @dataclasses.dataclass
 class TfExampleDecoder(hyperparams.Config):
   regenerate_source_id: bool = False
+  mask_binarize_threshold: Optional[float] = None
 
 
 @dataclasses.dataclass
 class TfExampleDecoderLabelMap(hyperparams.Config):
   regenerate_source_id: bool = False
+  mask_binarize_threshold: Optional[float] = None
   label_map: str = ''
 
 
@@ -73,6 +75,7 @@ class DataConfig(cfg.DataConfig):
   decoder: DataDecoder = DataDecoder()
   parser: Parser = Parser()
   shuffle_buffer_size: int = 10000
+  file_type: str = 'tfrecord'
 
 
 @dataclasses.dataclass

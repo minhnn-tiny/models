@@ -1,4 +1,4 @@
-# Copyright 2020 The TensorFlow Authors. All Rights Reserved.
+# Copyright 2021 The TensorFlow Authors. All Rights Reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -11,7 +11,7 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-# ==============================================================================
+
 """Anchor box and labeler definition."""
 
 import collections
@@ -203,7 +203,8 @@ class RpnAnchorLabeler(AnchorLabeler):
                unmatched_threshold=0.3,
                rpn_batch_size_per_im=256,
                rpn_fg_fraction=0.5):
-    AnchorLabeler.__init__(self, match_threshold=0.7, unmatched_threshold=0.3)
+    AnchorLabeler.__init__(self, match_threshold=match_threshold,
+                           unmatched_threshold=unmatched_threshold)
     self._rpn_batch_size_per_im = rpn_batch_size_per_im
     self._rpn_fg_fraction = rpn_fg_fraction
 

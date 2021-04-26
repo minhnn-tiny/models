@@ -1,4 +1,4 @@
-# Copyright 2020 The Orbit Authors. All Rights Reserved.
+# Copyright 2021 The Orbit Authors. All Rights Reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -71,7 +71,7 @@ class SummaryManager:
     provided in `summary_dict`, yielding a hierarchy of directories which will
     then be reflected in the TensorBoard UI as different colored curves.
 
-    For example, users may evaluate on muliple datasets and return
+    For example, users may evaluate on multiple datasets and return
     `summary_dict` as a nested dictionary:
 
         {

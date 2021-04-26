@@ -1,4 +1,4 @@
-# Copyright 2020 The TensorFlow Authors. All Rights Reserved.
+# Copyright 2021 The TensorFlow Authors. All Rights Reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -19,4 +19,5 @@ from official.modeling.optimization.configs.learning_rate_config import *
 from official.modeling.optimization.configs.optimization_config import *
 from official.modeling.optimization.configs.optimizer_config import *
 from official.modeling.optimization.ema_optimizer import ExponentialMovingAverage
+from official.modeling.optimization.lr_schedule import *
 from official.modeling.optimization.optimizer_factory import OptimizerFactory

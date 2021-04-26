@@ -1,5 +1,4 @@
-# Lint as: python3
-# Copyright 2020 The TensorFlow Authors. All Rights Reserved.
+# Copyright 2021 The TensorFlow Authors. All Rights Reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -12,15 +11,17 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-# ==============================================================================
+
 """Video classification task definition."""
+from typing import Any, Optional, List, Tuple
+
 from absl import logging
 import tensorflow as tf
 from official.core import base_task
-from official.core import input_reader
 from official.core import task_factory
 from official.modeling import tf_utils
 from official.vision.beta.configs import video_classification as exp_cfg
+from official.vision.beta.dataloaders import input_reader_factory
 from official.vision.beta.dataloaders import video_input
 from official.vision.beta.modeling import factory_3d
 
@@ -61,20 +62,26 @@ class VideoClassificationTask(base_task.Task):
       raise ValueError('Unknown input file type {!r}'.format(params.file_type))
 
   def _get_decoder_fn(self, params):
-    decoder = video_input.Decoder()
+    decoder = video_input.Decoder(
+        image_key=params.image_field_key, label_key=params.label_field_key)
     if self.task_config.train_data.output_audio:
       assert self.task_config.train_data.audio_feature, 'audio feature is empty'
       decoder.add_feature(self.task_config.train_data.audio_feature,
                           tf.io.VarLenFeature(dtype=tf.float32))
     return decoder.decode
 
-  def build_inputs(self, params: exp_cfg.DataConfig, input_context=None):
+  def build_inputs(self,
+                   params: exp_cfg.DataConfig,
+                   input_context: Optional[tf.distribute.InputContext] = None):
     """Builds classification input."""
 
-    parser = video_input.Parser(input_params=params)
+    parser = video_input.Parser(
+        input_params=params,
+        image_key=params.image_field_key,
+        label_key=params.label_field_key)
     postprocess_fn = video_input.PostBatchProcessor(params)
 
-    reader = input_reader.InputReader(
+    reader = input_reader_factory.input_reader_generator(
         params,
         dataset_fn=self._get_dataset_fn(params),
         decoder_fn=self._get_decoder_fn(params),
@@ -85,7 +92,10 @@ class VideoClassificationTask(base_task.Task):
 
     return dataset
 
-  def build_losses(self, labels, model_outputs, aux_losses=None):
+  def build_losses(self,
+                   labels: Any,
+                   model_outputs: Any,
+                   aux_losses: Optional[Any] = None):
     """Sparse categorical cross entropy loss.
 
     Args:
@@ -132,7 +142,7 @@ class VideoClassificationTask(base_task.Task):
 
     return all_losses
 
-  def build_metrics(self, training=True):
+  def build_metrics(self, training: bool = True):
     """Gets streaming metrics for training/validation."""
     if self.task_config.losses.one_hot:
       metrics = [
@@ -154,6 +164,10 @@ class VideoClassificationTask(base_task.Task):
                 curve='PR',
                 multi_label=self.task_config.train_data.is_multilabel,
                 name='PR-AUC'))
+        if self.task_config.metrics.use_per_class_recall:
+          for i in range(self.task_config.train_data.num_classes):
+            metrics.append(
+                tf.keras.metrics.Recall(class_id=i, name=f'recall-{i}'))
     else:
       metrics = [
           tf.keras.metrics.SparseCategoricalAccuracy(name='accuracy'),
@@ -164,7 +178,8 @@ class VideoClassificationTask(base_task.Task):
       ]
     return metrics
 
-  def process_metrics(self, metrics, labels, model_outputs):
+  def process_metrics(self, metrics: List[Any], labels: Any,
+                      model_outputs: Any):
     """Process and update metrics.
 
     Called when using custom training loop API.
@@ -179,7 +194,11 @@ class VideoClassificationTask(base_task.Task):
     for metric in metrics:
       metric.update_state(labels, model_outputs)
 
-  def train_step(self, inputs, model, optimizer, metrics=None):
+  def train_step(self,
+                 inputs: Tuple[Any, Any],
+                 model: tf.keras.Model,
+                 optimizer: tf.keras.optimizers.Optimizer,
+                 metrics: Optional[List[Any]] = None):
     """Does forward and backward.
 
     Args:
@@ -195,10 +214,7 @@ class VideoClassificationTask(base_task.Task):
 
     num_replicas = tf.distribute.get_strategy().num_replicas_in_sync
     with tf.GradientTape() as tape:
-      if self.task_config.train_data.output_audio:
-        outputs = model(features, training=True)
-      else:
-        outputs = model(features['image'], training=True)
+      outputs = model(features, training=True)
       # Casting output layer as float32 is necessary when mixed_precision is
       # mixed_float16 or mixed_bfloat16 to ensure output is casted as float32.
       outputs = tf.nest.map_structure(
@@ -239,7 +255,10 @@ class VideoClassificationTask(base_task.Task):
       logs.update({m.name: m.result() for m in model.metrics})
     return logs
 
-  def validation_step(self, inputs, model, metrics=None):
+  def validation_step(self,
+                      inputs: Tuple[Any, Any],
+                      model: tf.keras.Model,
+                      metrics: Optional[List[Any]] = None):
     """Validatation step.
 
     Args:
@@ -265,14 +284,18 @@ class VideoClassificationTask(base_task.Task):
       logs.update({m.name: m.result() for m in model.metrics})
     return logs
 
-  def inference_step(self, features, model):
+  def inference_step(self, features: tf.Tensor, model: tf.keras.Model):
     """Performs the forward step."""
-    if self.task_config.train_data.output_audio:
-      outputs = model(features, training=False)
-    else:
-      outputs = model(features['image'], training=False)
+    outputs = model(features, training=False)
     if self.task_config.train_data.is_multilabel:
       outputs = tf.math.sigmoid(outputs)
     else:
       outputs = tf.math.softmax(outputs)
+    num_test_clips = self.task_config.validation_data.num_test_clips
+    num_test_crops = self.task_config.validation_data.num_test_crops
+    num_test_views = num_test_clips * num_test_crops
+    if num_test_views > 1:
+      # Averaging output probabilities across multiples views.
+      outputs = tf.reshape(outputs, [-1, num_test_views, outputs.shape[-1]])
+      outputs = tf.reduce_mean(outputs, axis=1)
     return outputs

@@ -1,4 +1,4 @@
-# Copyright 2020 The Orbit Authors. All Rights Reserved.
+# Copyright 2021 The Orbit Authors. All Rights Reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -22,6 +22,7 @@ from orbit.utils.epoch_helper import EpochHelper
 
 from orbit.utils.loop_fns import create_loop_fn
 from orbit.utils.loop_fns import create_tf_while_loop_fn
+from orbit.utils.loop_fns import LoopFnWithSummaries
 
 from orbit.utils.summary_manager import SummaryManager
 

@@ -99,6 +99,10 @@ def _compute_losses_and_predictions_dicts(
           k-hot tensor of classes.
         labels[fields.InputDataFields.groundtruth_track_ids] is a int32
           tensor of track IDs.
+        labels[fields.InputDataFields.groundtruth_keypoint_depths] is a
+          float32 tensor containing keypoint depths information.
+        labels[fields.InputDataFields.groundtruth_keypoint_depth_weights] is a
+          float32 tensor containing the weights of the keypoint depth feature.
     add_regularization_loss: Whether or not to include the model's
       regularization loss in the losses dictionary.
 
@@ -137,6 +141,42 @@ def _compute_losses_and_predictions_dicts(
   losses_dict['Loss/total_loss'] = total_loss
 
   return losses_dict, prediction_dict
+
+
+def _ensure_model_is_built(model, input_dataset, unpad_groundtruth_tensors):
+  """Ensures that model variables are all built, by running on a dummy input.
+
+  Args:
+    model: A DetectionModel to be built.
+    input_dataset: The tf.data Dataset the model is being trained on. Needed to
+      get the shapes for the dummy loss computation.
+    unpad_groundtruth_tensors: A parameter passed to unstack_batch.
+  """
+  features, labels = iter(input_dataset).next()
+
+  @tf.function
+  def _dummy_computation_fn(features, labels):
+    model._is_training = False  # pylint: disable=protected-access
+    tf.keras.backend.set_learning_phase(False)
+
+    labels = model_lib.unstack_batch(
+        labels, unpad_groundtruth_tensors=unpad_groundtruth_tensors)
+
+    return _compute_losses_and_predictions_dicts(model, features, labels)
+
+  strategy = tf.compat.v2.distribute.get_strategy()
+  if hasattr(tf.distribute.Strategy, 'run'):
+    strategy.run(
+        _dummy_computation_fn, args=(
+            features,
+            labels,
+        ))
+  else:
+    strategy.experimental_run_v2(
+        _dummy_computation_fn, args=(
+            features,
+            labels,
+        ))
 
 
 # TODO(kaftan): Explore removing learning_rate from this method & returning
@@ -213,6 +253,10 @@ def eager_train_step(detection_model,
           k-hot tensor of classes.
         labels[fields.InputDataFields.groundtruth_track_ids] is a int32
           tensor of track IDs.
+        labels[fields.InputDataFields.groundtruth_keypoint_depths] is a
+          float32 tensor containing keypoint depths information.
+        labels[fields.InputDataFields.groundtruth_keypoint_depth_weights] is a
+          float32 tensor containing the weights of the keypoint depth feature.
     unpad_groundtruth_tensors: A parameter passed to unstack_batch.
     optimizer: The training optimizer that will update the variables.
     learning_rate: The learning rate tensor for the current training step.
@@ -303,9 +347,9 @@ def is_object_based_checkpoint(checkpoint_path):
   return '_CHECKPOINTABLE_OBJECT_GRAPH' in var_names
 
 
-def load_fine_tune_checkpoint(
-    model, checkpoint_path, checkpoint_type, checkpoint_version, input_dataset,
-    unpad_groundtruth_tensors):
+def load_fine_tune_checkpoint(model, checkpoint_path, checkpoint_type,
+                              checkpoint_version, run_model_on_dummy_input,
+                              input_dataset, unpad_groundtruth_tensors):
   """Load a fine tuning classification or detection checkpoint.
 
   To make sure the model variables are all built, this method first executes
@@ -327,6 +371,9 @@ def load_fine_tune_checkpoint(
     checkpoint_version: train_pb2.CheckpointVersion.V1 or V2 enum indicating
       whether to load checkpoints in V1 style or V2 style.  In this binary
       we only support V2 style (object-based) checkpoints.
+    run_model_on_dummy_input: Whether to run the model on a dummy input in order
+      to ensure that all model variables have been built successfully before
+      loading the fine_tune_checkpoint.
     input_dataset: The tf.data Dataset the model is being trained on. Needed
       to get the shapes for the dummy loss computation.
     unpad_groundtruth_tensors: A parameter passed to unstack_batch.
@@ -341,34 +388,8 @@ def load_fine_tune_checkpoint(
   if checkpoint_version == train_pb2.CheckpointVersion.V1:
     raise ValueError('Checkpoint version should be V2')
 
-  features, labels = iter(input_dataset).next()
-
-  @tf.function
-  def _dummy_computation_fn(features, labels):
-    model._is_training = False  # pylint: disable=protected-access
-    tf.keras.backend.set_learning_phase(False)
-
-    labels = model_lib.unstack_batch(
-        labels, unpad_groundtruth_tensors=unpad_groundtruth_tensors)
-
-    return _compute_losses_and_predictions_dicts(
-        model,
-        features,
-        labels)
-
-  strategy = tf.compat.v2.distribute.get_strategy()
-  if hasattr(tf.distribute.Strategy, 'run'):
-    strategy.run(
-        _dummy_computation_fn, args=(
-            features,
-            labels,
-        ))
-  else:
-    strategy.experimental_run_v2(
-        _dummy_computation_fn, args=(
-            features,
-            labels,
-        ))
+  if run_model_on_dummy_input:
+    _ensure_model_is_built(model, input_dataset, unpad_groundtruth_tensors)
 
   restore_from_objects_dict = model.restore_from_objects(
       fine_tune_checkpoint_type=checkpoint_type)
@@ -486,7 +507,7 @@ def train_loop(
     train_steps = train_config.num_steps
 
   if kwargs['use_bfloat16']:
-    tf.compat.v2.keras.mixed_precision.experimental.set_policy('mixed_bfloat16')
+    tf.compat.v2.keras.mixed_precision.set_global_policy('mixed_bfloat16')
 
   if train_config.load_all_detection_checkpoint_vars:
     raise ValueError('train_pb2.load_all_detection_checkpoint_vars '
@@ -498,6 +519,8 @@ def train_loop(
 
   # Write the as-run pipeline config to disk.
   if save_final_config:
+    tf.logging.info('Saving pipeline config file to directory {}'.format(
+        model_dir))
     pipeline_config_final = create_pipeline_proto_from_configs(configs)
     config_util.save_pipeline_config(pipeline_config_final, model_dir)
 
@@ -529,6 +552,15 @@ def train_loop(
     optimizer, (learning_rate,) = optimizer_builder.build(
         train_config.optimizer, global_step=global_step)
 
+    # We run the detection_model on dummy inputs in order to ensure that the
+    # model and all its variables have been properly constructed. Specifically,
+    # this is currently necessary prior to (potentially) creating shadow copies
+    # of the model variables for the EMA optimizer.
+    if train_config.optimizer.use_moving_average:
+      _ensure_model_is_built(detection_model, train_input,
+                             unpad_groundtruth_tensors)
+      optimizer.shadow_copy(detection_model)
+
     if callable(learning_rate):
       learning_rate_fn = learning_rate
     else:
@@ -558,12 +590,11 @@ def train_loop(
           lambda: global_step % num_steps_per_iteration == 0):
         # Load a fine-tuning checkpoint.
         if train_config.fine_tune_checkpoint:
-          load_fine_tune_checkpoint(detection_model,
-                                    train_config.fine_tune_checkpoint,
-                                    fine_tune_checkpoint_type,
-                                    fine_tune_checkpoint_version,
-                                    train_input,
-                                    unpad_groundtruth_tensors)
+          load_fine_tune_checkpoint(
+              detection_model, train_config.fine_tune_checkpoint,
+              fine_tune_checkpoint_type, fine_tune_checkpoint_version,
+              train_config.run_fine_tune_checkpoint_dummy_computation,
+              train_input, unpad_groundtruth_tensors)
 
         ckpt = tf.compat.v2.train.Checkpoint(
             step=global_step, model=detection_model, optimizer=optimizer)
@@ -667,6 +698,7 @@ def train_loop(
         'steps_per_sec': np.mean(steps_per_sec_list),
         'steps_per_sec_p50': np.median(steps_per_sec_list),
         'steps_per_sec_max': max(steps_per_sec_list),
+        'last_batch_loss': float(loss)
     }
     mixed_precision = 'bf16' if kwargs['use_bfloat16'] else 'fp32'
     performance_summary_exporter(metrics, mixed_precision)
@@ -778,7 +810,8 @@ def eager_eval_loop(
     eval_dataset,
     use_tpu=False,
     postprocess_on_cpu=False,
-    global_step=None):
+    global_step=None,
+    ):
   """Evaluate the model eagerly on the evaluation dataset.
 
   This method will compute the evaluation metrics specified in the configs on
@@ -878,7 +911,8 @@ def eager_eval_loop(
       (losses_dict, prediction_dict, groundtruth_dict,
        eval_features) = strategy.run(
            compute_eval_dict, args=(features, labels))
-    except:  # pylint:disable=bare-except
+    except Exception as exc:  # pylint:disable=broad-except
+      tf.logging.info('Encountered %s exception.', exc)
       tf.logging.info('A replica probably exhausted all examples. Skipping '
                       'pending examples on other replicas.')
       break
@@ -951,11 +985,10 @@ def eager_eval_loop(
     eval_metrics[loss_key] = tf.reduce_mean(loss_metrics[loss_key])
 
   eval_metrics = {str(k): v for k, v in eval_metrics.items()}
-  tf.logging.info('Eval metrics at step %d', global_step)
+  tf.logging.info('Eval metrics at step %d', global_step.numpy())
   for k in eval_metrics:
     tf.compat.v2.summary.scalar(k, eval_metrics[k], step=global_step)
     tf.logging.info('\t+ %s: %f', k, eval_metrics[k])
-
   return eval_metrics
 
 
@@ -973,6 +1006,7 @@ def eval_continuously(
     wait_interval=180,
     timeout=3600,
     eval_index=0,
+    save_final_config=False,
     **kwargs):
   """Run continuous evaluation of a detection model eagerly.
 
@@ -1004,11 +1038,14 @@ def eval_continuously(
       will terminate if no new checkpoints are found after these many seconds.
     eval_index: int, If given, only evaluate the dataset at the given
       index. By default, evaluates dataset at 0'th index.
-
+    save_final_config: Whether to save the pipeline config file to the model
+      directory.
     **kwargs: Additional keyword arguments for configuration override.
   """
   get_configs_from_pipeline_file = MODEL_BUILD_UTIL_MAP[
       'get_configs_from_pipeline_file']
+  create_pipeline_proto_from_configs = MODEL_BUILD_UTIL_MAP[
+      'create_pipeline_proto_from_configs']
   merge_external_params_with_configs = MODEL_BUILD_UTIL_MAP[
       'merge_external_params_with_configs']
 
@@ -1026,6 +1063,12 @@ def eval_continuously(
         'Forced number of epochs for all eval validations to be 1.')
   configs = merge_external_params_with_configs(
       configs, None, kwargs_dict=kwargs)
+  if model_dir and save_final_config:
+    tf.logging.info('Saving pipeline config file to directory {}'.format(
+        model_dir))
+    pipeline_config_final = create_pipeline_proto_from_configs(configs)
+    config_util.save_pipeline_config(pipeline_config_final, model_dir)
+
   model_config = configs['model']
   train_input_config = configs['train_input_config']
   eval_config = configs['eval_config']
@@ -1042,7 +1085,7 @@ def eval_continuously(
     eval_on_train_input_config.num_epochs = 1
 
   if kwargs['use_bfloat16']:
-    tf.compat.v2.keras.mixed_precision.experimental.set_policy('mixed_bfloat16')
+    tf.compat.v2.keras.mixed_precision.set_global_policy('mixed_bfloat16')
 
   eval_input_config = eval_input_configs[eval_index]
   strategy = tf.compat.v2.distribute.get_strategy()
@@ -1060,12 +1103,28 @@ def eval_continuously(
   global_step = tf.compat.v2.Variable(
       0, trainable=False, dtype=tf.compat.v2.dtypes.int64)
 
+  optimizer, _ = optimizer_builder.build(
+      configs['train_config'].optimizer, global_step=global_step)
+
   for latest_checkpoint in tf.train.checkpoints_iterator(
       checkpoint_dir, timeout=timeout, min_interval_secs=wait_interval):
     ckpt = tf.compat.v2.train.Checkpoint(
-        step=global_step, model=detection_model)
+        step=global_step, model=detection_model, optimizer=optimizer)
+
+    # We run the detection_model on dummy inputs in order to ensure that the
+    # model and all its variables have been properly constructed. Specifically,
+    # this is currently necessary prior to (potentially) creating shadow copies
+    # of the model variables for the EMA optimizer.
+    if eval_config.use_moving_averages:
+      unpad_groundtruth_tensors = (eval_config.batch_size == 1 and not use_tpu)
+      _ensure_model_is_built(detection_model, eval_input,
+                             unpad_groundtruth_tensors)
+      optimizer.shadow_copy(detection_model)
 
     ckpt.restore(latest_checkpoint).expect_partial()
+
+    if eval_config.use_moving_averages:
+      optimizer.swap_weights()
 
     summary_writer = tf.compat.v2.summary.create_file_writer(
         os.path.join(model_dir, 'eval', eval_input_config.name))
@@ -1076,4 +1135,5 @@ def eval_continuously(
           eval_input,
           use_tpu=use_tpu,
           postprocess_on_cpu=postprocess_on_cpu,
-          global_step=global_step)
+          global_step=global_step,
+          )

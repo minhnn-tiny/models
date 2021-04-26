@@ -1,5 +1,4 @@
-# Lint as: python3
-# Copyright 2020 The TensorFlow Authors. All Rights Reserved.
+# Copyright 2021 The TensorFlow Authors. All Rights Reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -12,7 +11,8 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-# ==============================================================================
+
+# Lint as: python3
 """Utils for processing video dataset features."""
 
 from typing import Optional, Tuple
@@ -106,9 +106,10 @@ def sample_sequence(sequence: tf.Tensor,
 
   if random:
     sequence_length = tf.cast(sequence_length, tf.float32)
+    frame_stride = tf.cast(stride, tf.float32)
     max_offset = tf.cond(
-        sequence_length > (num_steps - 1) * stride,
-        lambda: sequence_length - (num_steps - 1) * stride,
+        sequence_length > (num_steps - 1) * frame_stride,
+        lambda: sequence_length - (num_steps - 1) * frame_stride,
         lambda: sequence_length)
     offset = tf.random.uniform(
         (),
@@ -151,19 +152,19 @@ def crop_image(frames: tf.Tensor,
                target_height: int,
                target_width: int,
                random: bool = False,
-               num_views: int = 1,
+               num_crops: int = 1,
                seed: Optional[int] = None) -> tf.Tensor:
   """Crops the image sequence of images.
 
   If requested size is bigger than image size, image is padded with 0. If not
-  random cropping, a central crop is performed.
+  random cropping, a central crop is performed if num_crops is 1.
 
   Args:
     frames: A Tensor of dimension [timesteps, in_height, in_width, channels].
     target_height: Target cropped image height.
     target_width: Target cropped image width.
     random: A boolean indicating if crop should be randomized.
-    num_views: Number of views to crop in evaluation.
+    num_crops: Number of crops (support 1 for central crop and 3 for 3-crop).
     seed: A deterministic seed to use when random cropping.
 
   Returns:
@@ -181,13 +182,13 @@ def crop_image(frames: tf.Tensor,
     frames = tf.image.random_crop(
         frames, (seq_len, target_height, target_width, channels), seed)
   else:
-    if num_views == 1:
+    if num_crops == 1:
       # Central crop or pad.
       frames = tf.image.resize_with_crop_or_pad(frames, target_height,
                                                 target_width)
 
-    elif num_views == 3:
-      # Three-view evaluation.
+    elif num_crops == 3:
+      # Three-crop evaluation.
       shape = tf.shape(frames)
       static_shape = frames.shape.as_list()
       seq_len = shape[0] if static_shape[0] is None else static_shape[0]
@@ -224,7 +225,7 @@ def crop_image(frames: tf.Tensor,
 
     else:
       raise NotImplementedError(
-          f"Only 1 crop and 3 crop are supported. Found {num_views!r}.")
+          f"Only 1-crop and 3-crop are supported. Found {num_crops!r}.")
 
   return frames
 

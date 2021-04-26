@@ -1,4 +1,4 @@
-# Copyright 2020 The TensorFlow Authors. All Rights Reserved.
+# Copyright 2021 The TensorFlow Authors. All Rights Reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -164,6 +164,29 @@ class PowerAndLinearDecayLrConfig(base_config.Config):
   total_decay_steps: Optional[int] = None
   power: float = -0.5
   linear_decay_fraction: float = 0.1
+
+
+@dataclasses.dataclass
+class PowerDecayWithOffsetLrConfig(base_config.Config):
+  """Configuration for power learning rate decay with step offset.
+
+  Learning rate equals to `pre_offset_learning_rate` if `step` < `offset`.
+  Otherwise, learning rate equals to lr * (step - offset)^power.
+
+  Attributes:
+    name: The name of the learning rate schedule.
+      Defaults to PowerDecayWithOffset.
+    initial_learning_rate: A float. The initial learning rate. Defaults to None.
+    power: A float. Defaults to -0.5, for sqrt decay.
+    offset: An integer. Power decay happens after `offset` steps.
+    pre_offset_learning_rate: A float. The constant learning rate before
+      `offset` steps.
+  """
+  name: str = 'PowerDecayWithOffset'
+  initial_learning_rate: Optional[float] = None
+  power: float = -0.5
+  offset: int = 0
+  pre_offset_learning_rate: float = 1.0e6
 
 
 @dataclasses.dataclass
